@@ -1,0 +1,9 @@
+# CONSOLE_ENABLE = yes
+CUSTOM_MATRIX = lite
+
+# project specific files
+SRC += matrix.c
+UART_DRIVER_REQUIRED = yes
+#RGBLIGHT_ENABLE = yes
+#WS2812_ENABLE = yes
+WS2812_DRIVER_REQUIRED = yes
