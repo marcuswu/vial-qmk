@@ -24,6 +24,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 /* key matrix size */
 #define MATRIX_ROWS 4
 #define MATRIX_COLS 12
+#define MATRIX_COLS_LAST_ROW 4 // 4 keys plus 1 power alert bit in the final row
+#define POWER_ALERT_BIT true
 
 //#define ONESHOT_TIMEOUT 500
 

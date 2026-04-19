@@ -12,19 +12,21 @@ Copyright 2014 Jack Humbert
 
 #define UART_MATRIX_RESPONSE_TIMEOUT 10000
 
-// --- PHASE 1 MODIFICATION: Define new constants ---
+// Define keyboard arrangement
 #define NUM_HALVES 2
-#define KEYS_PER_ROW_HALF MATRIX_COLS / NUM_HALVES // Number of keys in each half of a row (e.g. 6 for a 12-column layout)
+#define KEYS_PER_ROW_HALF MATRIX_COLS / NUM_HALVES
 #define KEYS_PER_ROW_FULL MATRIX_COLS
-#define FULL_ROWS MATRIX_ROWS - 1 // Number of full rows (rows that have keys in both halves)
-#define KEYS_FINAL_ROW_HALF 4 + 1 // 4 keys in the final row (thumb cluster) plus 1 power alert bit
+#define FULL_ROWS MATRIX_ROWS - 1 // Last row is a thumb cluster with fewere keys
+#define KEYS_FINAL_ROW_HALF MATRIX_COLS_LAST_ROW + (POWER_ALERT_BIT ? 1 : 0) // define the thumb cluster
 #define KEYS_PER_HALF (KEYS_PER_ROW_HALF * FULL_ROWS + KEYS_FINAL_ROW_HALF)
 #define TOTAL_KEYS (KEYS_PER_HALF * 2)
 
+// Define UART communication protocol parameters
 #define BITS_PER_ROW_HALF KEYS_PER_ROW_HALF // Number of bits needed to represent the state of each half row of keys
 // A bit pattern that will never appear in the actual key state data, used to indicate end of frame to host
 #define END_OF_FRAME_BYTE (0xFF>>BITS_PER_ROW_HALF) << BITS_PER_ROW_HALF // 0xC0 for 6 columns per half, 0xE0 for 5 columns per half.
 #define ROW_MASK (0xFF>>(8-BITS_PER_ROW_HALF))
+#define FINAL_ROW_MASK (0xFF>>(8-MATRIX_COLS_LAST_ROW))
 #define TOTAL_DATA_BYTES ((FULL_ROWS + 1) * 2) // 2 bytes per row for full keyboard
 
 #define TOTAL_PACKET_BYTES (TOTAL_DATA_BYTES + 1)      // +1 for the end-of-frame byte
@@ -40,6 +42,8 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     bool    left_power_alert_bit = false;
     bool    right_power_alert_bit = false;
     matrix_row_t row_state = 0;
+    int left_idx = 0; // Even indices for left half
+    int right_idx = 0; // Odd indices for right half
 
     uart_write('s');
     uprintf("Scanning...\n");
@@ -87,8 +91,8 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     uprintf("\n");
 
     for (int row = 0; row < FULL_ROWS; row++) {
-        int left_idx = row * 2; // Even indices for left half
-        int right_idx = left_idx + 1; // Odd indices for right half
+        left_idx = row * 2; // Even indices for left half
+        right_idx = left_idx + 1; // Odd indices for right half
         row_state = 0;
 
         row_state |= (uart_data[left_idx] & ROW_MASK); // Left half cols 0-5
@@ -100,18 +104,21 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
         }
     }
     // handle final row separately since it has a different number of keys and also includes the power alert bit
-    int final_row_idx = FULL_ROWS * 2; // Start of final row data in uart_data
-    // matrix_row_t row_state = 0;
+    left_idx = FULL_ROWS * 2; // Even index for left half of final row
+    right_idx = left_idx + 1; // Odd index for right half of final row
+    row_state = 0;
     // First 4 bits are keys in the final row
-    row_state |= (uart_data[final_row_idx] & 0x0F); // Final row cols 0-3
-    row_state |= (uart_data[final_row_idx + 1] & 0x0F) << 4; // Map power alert bit to bit 11 (col 11) of the final row
-    // 5th bit is the power alert bit, which we will map to the highest bit of the final row's state for now
-    left_power_alert_bit = (uart_data[final_row_idx] >> 4) & 0x01; // Extract the power alert bit from bit 4 of the final byte
-    right_power_alert_bit = (uart_data[final_row_idx + 1] >> 4) & 0x01; // Extract the power alert bit from bit 4 of the final byte
+    row_state |= (uart_data[left_idx] & FINAL_ROW_MASK); // Final row cols 0-3
+    row_state |= (uart_data[right_idx] & FINAL_ROW_MASK) << MATRIX_COLS_LAST_ROW; // Map power alert bit to the appropriate position
     if (current_matrix[FULL_ROWS] != row_state) {
         changed = true;
         current_matrix[FULL_ROWS] = row_state;
     }
+
+    // 5th bit is the power alert bit, which we will map to the highest bit of the final row's state for now
+    #if POWER_ALERT_BIT
+    left_power_alert_bit = (uart_data[left_idx] >> MATRIX_COLS_LAST_ROW) & 0x01; // Extract the power alert bit from bit 4 of the final byte
+    right_power_alert_bit = (uart_data[right_idx] >> MATRIX_COLS_LAST_ROW) & 0x01; // Extract the power alert bit from bit 4 of the final byte
     if (left_power_alert_bit) {
         uprintf("Left half power alert!\n");
         ws2812_set_color(1, 255, 255, 0); // Yellow if left half power alert is active
@@ -126,6 +133,7 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
         uprintf("Right half power OK.\n");
         ws2812_set_color(0, 0, 255, 0); // Green if left half power alert is not active
     }
+    #endif
 
     return changed;
 }
