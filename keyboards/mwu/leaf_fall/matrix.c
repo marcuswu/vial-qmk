@@ -27,13 +27,13 @@ Copyright 2014 Jack Humbert
 #define END_OF_FRAME_BYTE (0xFF>>BITS_PER_ROW_HALF) << BITS_PER_ROW_HALF // 0xC0 for 6 columns per half, 0xE0 for 5 columns per half.
 #define ROW_MASK (0xFF>>(8-BITS_PER_ROW_HALF))
 #define FINAL_ROW_MASK (0xFF>>(8-MATRIX_COLS_LAST_ROW))
-#define TOTAL_DATA_BYTES ((FULL_ROWS + 1) * 2) // 2 bytes per row for full keyboard
+#define TOTAL_DATA_BYTES (MATRIX_ROWS * 2) // 2 bytes per row for full keyboard
 
 #define TOTAL_PACKET_BYTES (TOTAL_DATA_BYTES + 1)      // +1 for the end-of-frame byte
 
 void matrix_init_custom(void) {
     uart_init(1000000);
-    print("matrix_init_custom: UART Initialized at 1M baud (34-key layout)\n");
+    uprintf("matrix_init_custom: UART Initialized at 1M baud (%d-key layout)\n", TOTAL_KEYS);
 }
 
 bool matrix_scan_custom(matrix_row_t current_matrix[]) {
@@ -49,9 +49,11 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     uprintf("Scanning...\n");
     
     uint8_t uart_data[TOTAL_PACKET_BYTES] = {0};
+    uint8_t i = 0;
 
     // Read keystate bits
-    for (uint8_t i = 0; i < TOTAL_PACKET_BYTES; i++) {
+    for (timeout = 0; timeout < UART_MATRIX_RESPONSE_TIMEOUT; timeout++) {
+        // Wait for data to be available
         while (!uart_available()) {
             timeout++;
             if (timeout > UART_MATRIX_RESPONSE_TIMEOUT) {
@@ -59,25 +61,48 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
             }
         }
 
-        if (timeout < UART_MATRIX_RESPONSE_TIMEOUT) {
-            uart_data[i] = uart_read();
-        } else {
-            uart_data[i] = 0x00;
+        // Read a byte from UART
+        uart_data[i] = uart_read();
+
+        // Check for end of frame byte
+        if (uart_data[i] == END_OF_FRAME_BYTE) {
+            // If out of sync, read the next frame instead
+            if (i < TOTAL_DATA_BYTES) {
+                uprintf("Received early end of frame byte; ending read to resync\n");
+                i = 0;
+                continue;
+            }
+
+            // Otherwise, we have successfully read a full frame of data
+            break;
+        }
+
+        // Keep our buffer on the last TOTAL_DATA_BYTES bytes received.
+        // So that once we get the end of frame byte, we have the most recent
+        // TOTAL_DATA_BYTES bytes which should represent a full matrix state.
+        if (i == TOTAL_DATA_BYTES && uart_data[i] != END_OF_FRAME_BYTE) {
+            for (int j = 0; j < TOTAL_DATA_BYTES; j++) {
+                uart_data[j] = uart_data[j+1];
+            }
+        }
+
+        // Increment index if we haven't reached the end of our buffer yet
+        if (i < TOTAL_DATA_BYTES) {
+            i++;
         }
     }
 
-    // --- Check end byte; exit if invalid ---
+    // If we exited the loop due to timeout, we didn't get a valid frame
     if (uart_data[TOTAL_DATA_BYTES] != END_OF_FRAME_BYTE) {
-        uprintf("Error: Invalid end of frame byte! Expected 0x%02X, got 0x%02X\n", END_OF_FRAME_BYTE, uart_data[TOTAL_DATA_BYTES]);
         return false; // Don't update matrix if we didn't get a valid response
     }
 
     // Print key state data for debugging
     uprintf("Data: ");
-    for(int i = 0; i < TOTAL_DATA_BYTES; i++) {
-        // each byte in uart_data represents the state of one row of one half of the keyboard,
+    for(int i = 0; i < TOTAL_PACKET_BYTES; i++) {
+        // each byte represents the state of one row of one half of the keyboard,
         // with each bit representing one key
-        // key bits are packed to the lower bits of each byte, so we need to shift and mask to extract them
+        // columns i is represented by bit i of the byte where 0 is the leftmost column
         // even bytes represent the left half of the keyboard, odd bytes represent the right half
         // print each byte as binary, with a separator between left and right halves
         if (i % 2 == 0) {

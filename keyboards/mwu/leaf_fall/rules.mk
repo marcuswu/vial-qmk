@@ -4,6 +4,7 @@ CUSTOM_MATRIX = lite
 # project specific files
 SRC += matrix.c
 UART_DRIVER_REQUIRED = yes
+SERIAL_DRIVER = usart
 #RGBLIGHT_ENABLE = yes
 #WS2812_ENABLE = yes
 WS2812_DRIVER_REQUIRED = yes

@@ -17,9 +17,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #pragma once
 
-/* used uart pins on th rp2040 */
-#define SERIAL_USART_TX_PIN GP0
-#define SERIAL_USART_RX_PIN GP1
+// ensure that qmk treats tx/rx as normal uart pins
+/* used uart pins on the rp2040 */
+#define UART_TX_PIN GP12
+#define UART_RX_PIN GP13
+#define UART_TX_PAL_MODE PAL_MODE_ALTERNATE_UART
+#define UART_RX_PAL_MODE PAL_MODE_ALTERNATE_UART
 
 /* key matrix size */
 #define MATRIX_ROWS 4
