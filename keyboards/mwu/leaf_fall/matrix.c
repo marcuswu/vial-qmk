@@ -44,6 +44,12 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     matrix_row_t row_state = 0;
     int left_idx = 0; // Even indices for left half
     int right_idx = 0; // Odd indices for right half
+    int row = 0;
+
+    while (uart_available()) {
+        // Clear out any old data in the UART buffer before we start a new scan
+        uart_read();
+    }
 
     uart_write('s');
     uprintf("Scanning...\n");
@@ -52,13 +58,17 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     uint8_t i = 0;
 
     // Read keystate bits
-    for (timeout = 0; timeout < UART_MATRIX_RESPONSE_TIMEOUT; timeout++) {
-        // Wait for data to be available
+    for (i = 0; i < TOTAL_PACKET_BYTES; i++) {
+        // Wait for data to be available or exit read on timeout
         while (!uart_available()) {
             timeout++;
             if (timeout > UART_MATRIX_RESPONSE_TIMEOUT) {
                 break;
             }
+        }
+        if (timeout > UART_MATRIX_RESPONSE_TIMEOUT) {
+            uprintf("UART read timeout after %ld iterations; received %d bytes\n", timeout, i);
+            break;
         }
 
         // Read a byte from UART
@@ -66,14 +76,19 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
 
         // Check for end of frame byte
         if (uart_data[i] == END_OF_FRAME_BYTE) {
-            // If out of sync, read the next frame instead
+            // // If out of sync, read the next frame instead
+            // if (i < TOTAL_DATA_BYTES) {
+            //     uprintf("Received early end of frame byte; ending read to resync\n");
+            //     i = 0;
+            //     continue;
+            // }
             if (i < TOTAL_DATA_BYTES) {
-                uprintf("Received early end of frame byte; ending read to resync\n");
-                i = 0;
-                continue;
+                uprintf("Received end of frame byte too early (only %d bytes received); ignoring frame\n", i);
+                // Clear end of frame byte to indicate we didn't get a valid frame
+                uart_data[TOTAL_DATA_BYTES] = 0;
             }
 
-            // Otherwise, we have successfully read a full frame of data
+            // end of frame byte received, stop reading more data
             break;
         }
 
@@ -81,47 +96,42 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
         // So that once we get the end of frame byte, we have the most recent
         // TOTAL_DATA_BYTES bytes which should represent a full matrix state.
         if (i == TOTAL_DATA_BYTES && uart_data[i] != END_OF_FRAME_BYTE) {
-            for (int j = 0; j < TOTAL_DATA_BYTES; j++) {
-                uart_data[j] = uart_data[j+1];
-            }
-        }
-
-        // Increment index if we haven't reached the end of our buffer yet
-        if (i < TOTAL_DATA_BYTES) {
-            i++;
+            break;
         }
     }
 
     // If we exited the loop due to timeout, we didn't get a valid frame
     if (uart_data[TOTAL_DATA_BYTES] != END_OF_FRAME_BYTE) {
+        memset(uart_data, 0, sizeof(uart_data));
         return false; // Don't update matrix if we didn't get a valid response
     }
 
     // Print key state data for debugging
+    #ifdef CONSOLE_ENABLE
     uprintf("Data: ");
-    for(int i = 0; i < TOTAL_PACKET_BYTES; i++) {
+    for(int i = 0; i < TOTAL_DATA_BYTES; i++) {
         // each byte represents the state of one row of one half of the keyboard,
         // with each bit representing one key
         // columns i is represented by bit i of the byte where 0 is the leftmost column
         // even bytes represent the left half of the keyboard, odd bytes represent the right half
         // print each byte as binary, with a separator between left and right halves
-        if (i % 2 == 0) {
+        // if (i % 2 == 0) {
             uprintf("|"); // Separator for left half
-        }
-        // Print LSB to MSB to match the physical layout of the keys
-        for (int bit = 0; bit < BITS_PER_ROW_HALF; bit++) {
+        // }
+        for (int bit = 7; bit >= 0; bit--) {
             uprintf("%d", (uart_data[i] >> bit) & 0x01);
         }
     }
     uprintf("\n");
+    #endif
 
-    for (int row = 0; row < FULL_ROWS; row++) {
+    for (row = 0; row < FULL_ROWS; row++) {
         left_idx = row * 2; // Even indices for left half
         right_idx = left_idx + 1; // Odd indices for right half
         row_state = 0;
 
         row_state |= (uart_data[left_idx] & ROW_MASK); // Left half cols 0-5
-        row_state |= (uart_data[right_idx] & ROW_MASK) << 6; // Right half cols 6-11
+        row_state |= (uart_data[right_idx] & ROW_MASK) << KEYS_PER_ROW_HALF; // Right half cols 6-11
 
         if (current_matrix[row] != row_state) {
             changed = true;
@@ -129,7 +139,8 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
         }
     }
     // handle final row separately since it has a different number of keys and also includes the power alert bit
-    left_idx = FULL_ROWS * 2; // Even index for left half of final row
+    row = FULL_ROWS;
+    left_idx = row * 2; // Even index for left half of final row
     right_idx = left_idx + 1; // Odd index for right half of final row
     row_state = 0;
     // First 4 bits are keys in the final row
@@ -145,17 +156,17 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     left_power_alert_bit = (uart_data[left_idx] >> MATRIX_COLS_LAST_ROW) & 0x01; // Extract the power alert bit from bit 4 of the final byte
     right_power_alert_bit = (uart_data[right_idx] >> MATRIX_COLS_LAST_ROW) & 0x01; // Extract the power alert bit from bit 4 of the final byte
     if (left_power_alert_bit) {
-        uprintf("Left half power alert!\n");
+        //uprintf("Left half power alert!\n");
         ws2812_set_color(1, 255, 255, 0); // Yellow if left half power alert is active
     } else {
-        uprintf("Left half power OK.\n");
+        //uprintf("Left half power OK.\n");
         ws2812_set_color(1, 0, 255, 0); // Green if left half power alert is not active
     }
     if (right_power_alert_bit) {
-        uprintf("Right half power alert!\n");
+        //uprintf("Right half power alert!\n");
         ws2812_set_color(0, 255, 255, 0); // Yellow if left half power alert is active
     } else {
-        uprintf("Right half power OK.\n");
+        //uprintf("Right half power OK.\n");
         ws2812_set_color(0, 0, 255, 0); // Green if left half power alert is not active
     }
     #endif

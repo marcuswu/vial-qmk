@@ -1,4 +1,4 @@
-# CONSOLE_ENABLE = yes
+CONSOLE_ENABLE = yes
 CUSTOM_MATRIX = lite
 
 # project specific files
